@@ -18,9 +18,9 @@ package main
 
 import (
 	"flag"
+	"k8s.io/klog"
 	"time"
 
-	"github.com/golang/glog"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -43,24 +43,24 @@ func main() {
 
 	cfg, err := clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
 	if err != nil {
-		glog.Fatalf("Error building kubeconfig: %s", err.Error())
+		klog.Fatalf("Error building kubeconfig: %s", err.Error())
 	}
 
 	kubeClient, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		glog.Fatalf("Error building kubernetes clientset: %s", err.Error())
+		klog.Fatalf("Error building kubernetes clientset: %s", err.Error())
 	}
 
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
 
 
-	controller := NewProblemPodController(kubeInformerFactory.Core().V1().Pods(),kubeClient, )
+	controller := NewController(kubeInformerFactory.Core().V1().Pods(),kubeClient, )
 
 	go kubeInformerFactory.Start(stopCh)
 
-	if err = controller.Run(2, stopCh); err != nil {
-		glog.Fatalf("Error running controller: %s", err.Error())
+	if err = controller.Run(1, stopCh); err != nil {
+		klog.Fatalf("Error running controller: %s", err.Error())
 	}
 }
 
