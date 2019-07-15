@@ -18,10 +18,8 @@ package main
 
 import (
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/metrics"
 	"time"
 
-	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -38,23 +36,9 @@ import (
 
 const maxRetries=3
 
-const (
-	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
-	SuccessSynced = "Synced"
-	// ErrResourceExists is used as part of the Event 'reason' when a Foo fails
-	// to sync due to a Deployment of the same name already existing.
-	ErrResourceExists = "ErrResourceExists"
-
-	// MessageResourceExists is the message used for Events when a resource
-	// fails to sync due to a Deployment already existing
-	MessageResourceExists = "Resource %q already exists and is not managed by Foo"
-	// MessageResourceSynced is the message used for an Event fired when a Foo
-	// is synced successfully
-	MessageResourceSynced = "Foo synced successfully"
-)
 
 // Controller is the controller implementation for Foo resources
-type ProblemPodController struct {
+type Controller struct {
 	client           clientset.Interface
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
@@ -79,10 +63,10 @@ type ProblemPodController struct {
 }
 
 // NewController returns a new sample controller
-func NewProblemPodController(
+func NewController(
 	podInformer coreinformers.PodInformer,
 	client clientset.Interface,
-	) *ProblemPodController {
+	) *Controller {
 
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
@@ -92,9 +76,6 @@ func NewProblemPodController(
 	broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 	recorder := broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "problemPod-controller"})
 
-	if client != nil && client.CoreV1().RESTClient().GetRateLimiter() != nil {
-		metrics.RegisterMetricAndTrackRateLimiterUsage("endpoint_controller", client.CoreV1().RESTClient().GetRateLimiter())
-	}
 
 	//utilruntime.Must(samplescheme.AddToScheme(scheme.Scheme))
 	//glog.V(4).Info("Creating event broadcaster")
@@ -103,7 +84,7 @@ func NewProblemPodController(
 	//eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
 	//recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
-	p := &ProblemPodController{
+	p := &Controller{
 		client:           client,
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "problemPod"),
 		workerLoopPeriod: time.Second,
@@ -128,7 +109,7 @@ func NewProblemPodController(
 // as syncing informer caches and starting workers. It will block until stopCh
 // is closed, at which point it will shutdown the workqueue and wait for
 // workers to finish processing their current work items.
-func (c *ProblemPodController) Run(workers int, stopCh <-chan struct{}) error {
+func (c *Controller) Run(workers int, stopCh <-chan struct{}) error {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
@@ -139,7 +120,7 @@ func (c *ProblemPodController) Run(workers int, stopCh <-chan struct{}) error {
 	klog.Info("Waiting for informer caches to sync")
 	defer klog.Infof("Shutting down endpoint controller")
 
-		glog.Info("Starting workers")
+		klog.Info("Starting workers")
 		// Launch two workers to process Foo resources
 		for i := 0; i < workers; i++ {
 			go wait.Until(c.worker, c.workerLoopPeriod, stopCh)
@@ -156,14 +137,14 @@ func (c *ProblemPodController) Run(workers int, stopCh <-chan struct{}) error {
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
 // workqueue.
-func (c *ProblemPodController) worker() {
+func (c *Controller) worker() {
 	for c.processNextWorkItem() {
 	}
 }
 
 // processNextWorkItem will read a single work item off the workqueue and
 // attempt to process it, by calling the syncHandler.
-func (c *ProblemPodController) processNextWorkItem() bool {
+func (c *Controller) processNextWorkItem() bool {
 	eKey, quit := c.queue.Get()
 	if quit {
 		return false
@@ -176,7 +157,7 @@ func (c *ProblemPodController) processNextWorkItem() bool {
 	return true
 }
 
-func (c *ProblemPodController) syncPod(key string) error {
+func (c *Controller) syncPod(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
@@ -191,7 +172,7 @@ func (c *ProblemPodController) syncPod(key string) error {
 	return nil
 }
 
-func (e *ProblemPodController) updatePod(old, cur interface{}) {
+func (e *Controller) updatePod(old, cur interface{}) {
 	newPod := cur.(*v1.Pod)
 	oldPod := old.(*v1.Pod)
 	if newPod.ResourceVersion == oldPod.ResourceVersion {
@@ -205,7 +186,13 @@ func (e *ProblemPodController) updatePod(old, cur interface{}) {
 	if !podChangedFlag  {
 		return
 	}
-		e.queue.Add(newPod)
+	var key string
+	var err error
+	if key, err = cache.MetaNamespaceKeyFunc(newPod); err != nil {
+		utilruntime.HandleError(err)
+		return
+	}
+	e.queue.Add(key)
 
 }
 
@@ -223,7 +210,7 @@ func podChanged(oldPod, newPod *v1.Pod) bool {
 	}
 	return false
 }
-func (e *ProblemPodController) handleErr(err error, key interface{}) {
+func (e *Controller) handleErr(err error, key interface{}) {
 	if err == nil {
 		e.queue.Forget(key)
 		return
@@ -239,3 +226,4 @@ func (e *ProblemPodController) handleErr(err error, key interface{}) {
 	e.queue.Forget(key)
 	utilruntime.HandleError(err)
 }
+
